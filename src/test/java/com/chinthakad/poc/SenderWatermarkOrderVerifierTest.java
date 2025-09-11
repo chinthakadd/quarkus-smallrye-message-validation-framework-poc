@@ -1,11 +1,8 @@
 package com.chinthakad.poc;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -131,6 +128,50 @@ class SenderWatermarkOrderVerifierTest {
         // Should be allowed (invalid format)
         assertTrue(verifier.verify(record));
         verifier.storeRecord(record);
+    }
+
+    @Test
+    void testVerifyLateArrivalWithinThreshold() {
+        // Set a threshold of 1000ms for testing
+        verifier.maxLateArrivalAllowedThreshold = 1000L;
+        
+        long timestamp1 = 2000L;
+        long timestamp2 = 1500L; // 500ms late - within threshold
+        
+        // First record
+        ConsumerRecord<String, String> record1 = createRecordWithHeaders("sender-1", "test-topic", 0, 0L, "value1", timestamp1);
+        assertTrue(verifier.verify(record1));
+        verifier.storeRecord(record1);
+        
+        // Late arrival within threshold (should be accepted)
+        ConsumerRecord<String, String> record2 = createRecordWithHeaders("sender-1", "test-topic", 0, 1L, "value2", timestamp2);
+        assertTrue(verifier.verify(record2)); // Should be accepted
+        
+        // Verify watermark is still the first timestamp (late arrival doesn't update watermark)
+        Long watermark = verifier.getWatermark("sender-1", "test-topic", 0);
+        assertEquals(timestamp1, watermark);
+    }
+
+    @Test
+    void testVerifyLateArrivalExceedsThreshold() {
+        // Set a threshold of 500ms for testing
+        verifier.maxLateArrivalAllowedThreshold = 500L;
+        
+        long timestamp1 = 2000L;
+        long timestamp2 = 1000L; // 1000ms late - exceeds threshold
+        
+        // First record
+        ConsumerRecord<String, String> record1 = createRecordWithHeaders("sender-1", "test-topic", 0, 0L, "value1", timestamp1);
+        assertTrue(verifier.verify(record1));
+        verifier.storeRecord(record1);
+        
+        // Late arrival exceeding threshold (should be rejected)
+        ConsumerRecord<String, String> record2 = createRecordWithHeaders("sender-1", "test-topic", 0, 1L, "value2", timestamp2);
+        assertFalse(verifier.verify(record2)); // Should be rejected
+        
+        // Verify watermark is still the first timestamp
+        Long watermark = verifier.getWatermark("sender-1", "test-topic", 0);
+        assertEquals(timestamp1, watermark);
     }
 
     private ConsumerRecord<String, String> createRecordWithHeaders(String sender, String topic, int partition, long offset, String value, long timestamp) {

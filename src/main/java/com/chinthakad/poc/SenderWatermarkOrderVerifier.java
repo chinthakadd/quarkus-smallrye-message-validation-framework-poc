@@ -3,9 +3,11 @@ package com.chinthakad.poc;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Verifier that tracks watermarks based on sender-timestamp headers.
@@ -17,6 +19,10 @@ public class SenderWatermarkOrderVerifier implements Verifier {
     
     // Key: (sender, topic, partition) -> Value: latest sender-timestamp
     private final ConcurrentMap<SenderPartitionKey, Long> senderWatermarks = new ConcurrentHashMap<>();
+    
+    @Inject
+    @ConfigProperty(name = "watermark.max-late-arrival-threshold", defaultValue = "0")
+    long maxLateArrivalAllowedThreshold;
     
     @Override
     public boolean verify(ConsumerRecord<String, String> record) {
@@ -44,14 +50,22 @@ public class SenderWatermarkOrderVerifier implements Verifier {
             }
             
             // Check if this is a late arrival
-            boolean isLateArrival = senderTimestamp < latestWatermark;
+            long lateness = latestWatermark - senderTimestamp;
+            boolean isLateArrival = lateness > 0;
+            boolean exceedsThreshold = lateness > maxLateArrivalAllowedThreshold;
             
-            if (isLateArrival) {
+            if (isLateArrival && exceedsThreshold) {
                 System.out.println("[SenderWatermarkOrderVerifier] LATE ARRIVAL detected for " + key + 
                                  " - Current timestamp: " + Instant.ofEpochMilli(senderTimestamp) + 
                                  " - Latest watermark: " + Instant.ofEpochMilli(latestWatermark) + 
-                                 " - Time difference: " + (latestWatermark - senderTimestamp) + "ms");
-                return false; // Reject late arrivals
+                                 " - Time difference: " + lateness + "ms (threshold: " + maxLateArrivalAllowedThreshold + "ms)");
+                return false; // Reject late arrivals exceeding threshold
+            } else if (isLateArrival) {
+                System.out.println("[SenderWatermarkOrderVerifier] ACCEPTED late arrival for " + key + 
+                                 " - Current timestamp: " + Instant.ofEpochMilli(senderTimestamp) + 
+                                 " - Latest watermark: " + Instant.ofEpochMilli(latestWatermark) + 
+                                 " - Time difference: " + lateness + "ms (within threshold: " + maxLateArrivalAllowedThreshold + "ms)");
+                return true; // Accept late arrivals within threshold
             } else {
                 System.out.println("[SenderWatermarkOrderVerifier] Record in order for " + key + 
                                  " - Current timestamp: " + Instant.ofEpochMilli(senderTimestamp) + 
