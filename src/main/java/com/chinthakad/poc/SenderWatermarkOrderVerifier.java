@@ -11,115 +11,121 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Verifier that tracks watermarks based on sender-timestamp headers.
- * Detects late arrivals by comparing sender-timestamp with the latest recorded timestamp
+ * Detects late arrivals by comparing sender-timestamp with the latest recorded
+ * timestamp
  * for each (sender, topic, partition) combination.
  */
 @ApplicationScoped
 public class SenderWatermarkOrderVerifier implements Verifier {
-    
+
     // Key: (sender, topic, partition) -> Value: latest sender-timestamp
     private final ConcurrentMap<SenderPartitionKey, Long> senderWatermarks = new ConcurrentHashMap<>();
-    
+
     @Inject
     @ConfigProperty(name = "watermark.max-late-arrival-threshold", defaultValue = "0")
     long maxLateArrivalAllowedThreshold;
-    
+
     @Override
-    public boolean verify(ConsumerRecord<String, String> record) {
-        String sender = getHeaderValue(record, "sender");
-        String senderTimestampStr = getHeaderValue(record, "sender-timestamp");
-        
+    public VerificationResultType verify(ConsumerRecord<String, String> record) {
+
+        final String sender = getHeaderValue(record, "sender");
+        final String senderTimestampStr = getHeaderValue(record, "sender-timestamp");
+
         // If no sender or timestamp headers, allow the record
         if (sender == null || senderTimestampStr == null) {
             System.out.println("[SenderWatermarkOrderVerifier] No sender or sender-timestamp headers - allowing");
-            return true;
+            return VerificationResultType.SUCCESS;
         }
-        
+
         try {
-            long senderTimestamp = Long.parseLong(senderTimestampStr);
-            SenderPartitionKey key = new SenderPartitionKey(sender, record.topic(), record.partition());
-            
+            final long senderTimestamp = Long.parseLong(senderTimestampStr);
+            final SenderPartitionKey key = new SenderPartitionKey(sender, record.topic(), record.partition());
+
             // Get the latest watermark for this sender-partition combination
             Long latestWatermark = senderWatermarks.get(key);
-            
+
             if (latestWatermark == null) {
                 // First record for this sender-partition combination
-                System.out.println("[SenderWatermarkOrderVerifier] First record for sender-partition " + key + 
-                                 " - allowing (timestamp: " + Instant.ofEpochMilli(senderTimestamp) + ")");
-                return true;
+                System.out.println("[SenderWatermarkOrderVerifier] First record for sender-partition " + key +
+                        " - allowing (timestamp: " + Instant.ofEpochMilli(senderTimestamp) + ")");
+                return VerificationResultType.SUCCESS;
             }
-            
+
             // Check if this is a late arrival
             long lateness = latestWatermark - senderTimestamp;
             boolean isLateArrival = lateness > 0;
             boolean exceedsThreshold = lateness > maxLateArrivalAllowedThreshold;
-            
+
             if (isLateArrival && exceedsThreshold) {
-                System.out.println("[SenderWatermarkOrderVerifier] LATE ARRIVAL detected for " + key + 
-                                 " - Current timestamp: " + Instant.ofEpochMilli(senderTimestamp) + 
-                                 " - Latest watermark: " + Instant.ofEpochMilli(latestWatermark) + 
-                                 " - Time difference: " + lateness + "ms (threshold: " + maxLateArrivalAllowedThreshold + "ms)");
-                return false; // Reject late arrivals exceeding threshold
+                System.out.println("[SenderWatermarkOrderVerifier] LATE ARRIVAL detected for " + key +
+                        " - Current timestamp: " + Instant.ofEpochMilli(senderTimestamp) +
+                        " - Latest watermark: " + Instant.ofEpochMilli(latestWatermark) +
+                        " - Time difference: " + lateness + "ms (threshold: " + maxLateArrivalAllowedThreshold + "ms)");
+                return VerificationResultType.FAILED_LATE_ARRIVAL; // Reject late arrivals exceeding threshold
             } else if (isLateArrival) {
-                System.out.println("[SenderWatermarkOrderVerifier] ACCEPTED late arrival for " + key + 
-                                 " - Current timestamp: " + Instant.ofEpochMilli(senderTimestamp) + 
-                                 " - Latest watermark: " + Instant.ofEpochMilli(latestWatermark) + 
-                                 " - Time difference: " + lateness + "ms (within threshold: " + maxLateArrivalAllowedThreshold + "ms)");
-                return true; // Accept late arrivals within threshold
+                System.out.println("[SenderWatermarkOrderVerifier] ACCEPTED late arrival for " + key +
+                        " - Current timestamp: " + Instant.ofEpochMilli(senderTimestamp) +
+                        " - Latest watermark: " + Instant.ofEpochMilli(latestWatermark) +
+                        " - Time difference: " + lateness + "ms (within threshold: " + maxLateArrivalAllowedThreshold
+                        + "ms)");
+                return VerificationResultType.SUCCESS; // Accept late arrivals within threshold
             } else {
-                System.out.println("[SenderWatermarkOrderVerifier] Record in order for " + key + 
-                                 " - Current timestamp: " + Instant.ofEpochMilli(senderTimestamp) + 
-                                 " - Previous watermark: " + Instant.ofEpochMilli(latestWatermark) + 
-                                 " - Time difference: " + (senderTimestamp - latestWatermark) + "ms");
-                return true;
+                System.out.println("[SenderWatermarkOrderVerifier] Record in order for " + key +
+                        " - Current timestamp: " + Instant.ofEpochMilli(senderTimestamp) +
+                        " - Previous watermark: " + Instant.ofEpochMilli(latestWatermark) +
+                        " - Time difference: " + (senderTimestamp - latestWatermark) + "ms");
+                return VerificationResultType.SUCCESS;
             }
-            
+
         } catch (NumberFormatException e) {
-            System.out.println("[SenderWatermarkOrderVerifier] Invalid sender-timestamp format: " + senderTimestampStr + " - allowing");
-            return true;
+            System.out.println("[SenderWatermarkOrderVerifier] Invalid sender-timestamp format: " + senderTimestampStr
+                    + " - allowing");
+            return VerificationResultType.SUCCESS;
         }
     }
-    
+
     @Override
     public void storeRecord(ConsumerRecord<String, String> record) {
         String sender = getHeaderValue(record, "sender");
         String senderTimestampStr = getHeaderValue(record, "sender-timestamp");
-        
+
         // If no sender or timestamp headers, skip storage
         if (sender == null || senderTimestampStr == null) {
-            System.out.println("[SenderWatermarkOrderVerifier] No sender or sender-timestamp headers - skipping storage");
+            System.out
+                    .println("[SenderWatermarkOrderVerifier] No sender or sender-timestamp headers - skipping storage");
             return;
         }
-        
+
         try {
             long senderTimestamp = Long.parseLong(senderTimestampStr);
             SenderPartitionKey key = new SenderPartitionKey(sender, record.topic(), record.partition());
-            
+
             // Update the watermark for this sender-partition combination
             Long previousWatermark = senderWatermarks.put(key, senderTimestamp);
-            
+
             if (previousWatermark != null) {
-                System.out.println("[SenderWatermarkOrderVerifier] Updated watermark for " + key + 
-                                 " - New timestamp: " + Instant.ofEpochMilli(senderTimestamp) + 
-                                 " - Previous: " + Instant.ofEpochMilli(previousWatermark) + 
-                                 " - Time difference: " + (senderTimestamp - previousWatermark) + "ms");
+                System.out.println("[SenderWatermarkOrderVerifier] Updated watermark for " + key +
+                        " - New timestamp: " + Instant.ofEpochMilli(senderTimestamp) +
+                        " - Previous: " + Instant.ofEpochMilli(previousWatermark) +
+                        " - Time difference: " + (senderTimestamp - previousWatermark) + "ms");
             } else {
-                System.out.println("[SenderWatermarkOrderVerifier] Set initial watermark for " + key + 
-                                 " - Timestamp: " + Instant.ofEpochMilli(senderTimestamp));
+                System.out.println("[SenderWatermarkOrderVerifier] Set initial watermark for " + key +
+                        " - Timestamp: " + Instant.ofEpochMilli(senderTimestamp));
             }
-            
+
         } catch (NumberFormatException e) {
-            System.out.println("[SenderWatermarkOrderVerifier] Invalid sender-timestamp format: " + senderTimestampStr + " - skipping storage");
+            System.out.println("[SenderWatermarkOrderVerifier] Invalid sender-timestamp format: " + senderTimestampStr
+                    + " - skipping storage");
         }
     }
-    
+
     @Override
     public int priority() {
         // Lower priority than TopicPartitionOffsetOrderVerifier
         // This should run after offset ordering is verified
         return 2;
     }
-    
+
     private String getHeaderValue(ConsumerRecord<String, String> record, String headerName) {
         if (record.headers() != null) {
             var header = record.headers().lastHeader(headerName);
@@ -129,7 +135,7 @@ public class SenderWatermarkOrderVerifier implements Verifier {
         }
         return null;
     }
-    
+
     /**
      * Gets the current watermark for a specific sender-partition combination.
      */
@@ -137,14 +143,14 @@ public class SenderWatermarkOrderVerifier implements Verifier {
         SenderPartitionKey key = new SenderPartitionKey(sender, topic, partition);
         return senderWatermarks.get(key);
     }
-    
+
     /**
      * Gets all current watermarks.
      */
     public ConcurrentMap<SenderPartitionKey, Long> getAllWatermarks() {
         return new ConcurrentHashMap<>(senderWatermarks);
     }
-    
+
     /**
      * Key class for (sender, topic, partition) combinations.
      */
@@ -152,27 +158,37 @@ public class SenderWatermarkOrderVerifier implements Verifier {
         private final String sender;
         private final String topic;
         private final int partition;
-        
+
         public SenderPartitionKey(String sender, String topic, int partition) {
             this.sender = sender;
             this.topic = topic;
             this.partition = partition;
         }
-        
-        public String getSender() { return sender; }
-        public String getTopic() { return topic; }
-        public int getPartition() { return partition; }
-        
+
+        public String getSender() {
+            return sender;
+        }
+
+        public String getTopic() {
+            return topic;
+        }
+
+        public int getPartition() {
+            return partition;
+        }
+
         @Override
         public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
+            if (this == o)
+                return true;
+            if (o == null || getClass() != o.getClass())
+                return false;
             SenderPartitionKey that = (SenderPartitionKey) o;
             return partition == that.partition &&
-                   sender.equals(that.sender) &&
-                   topic.equals(that.topic);
+                    sender.equals(that.sender) &&
+                    topic.equals(that.topic);
         }
-        
+
         @Override
         public int hashCode() {
             int result = sender.hashCode();
@@ -180,14 +196,14 @@ public class SenderWatermarkOrderVerifier implements Verifier {
             result = 31 * result + partition;
             return result;
         }
-        
+
         @Override
         public String toString() {
             return "SenderPartitionKey{" +
-                   "sender='" + sender + '\'' +
-                   ", topic='" + topic + '\'' +
-                   ", partition=" + partition +
-                   '}';
+                    "sender='" + sender + '\'' +
+                    ", topic='" + topic + '\'' +
+                    ", partition=" + partition +
+                    '}';
         }
     }
 }

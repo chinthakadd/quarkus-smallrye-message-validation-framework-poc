@@ -20,7 +20,7 @@ public class TopicPartitionOffsetOrderVerifier implements Verifier {
     private final ConcurrentMap<TopicPartition, AtomicLong> partitionOffsets = new ConcurrentHashMap<>();
     
     @Override
-    public boolean verify(ConsumerRecord<String, String> record) {
+    public VerificationResultType verify(ConsumerRecord<String, String> record) {
         TopicPartition partition = new TopicPartition(record.topic(), record.partition());
         
         // Get the latest processed offset for this partition
@@ -29,7 +29,7 @@ public class TopicPartitionOffsetOrderVerifier implements Verifier {
         // If this is the first record for this partition, allow it
         if (latestOffset == null) {
             System.out.println("[TopicPartitionOffsetOrderVerifier] First record for partition " + partition + " - allowing");
-            return true;
+            return VerificationResultType.SUCCESS;
         }
         
         // Check if this record's offset is greater than the latest processed offset
@@ -44,9 +44,10 @@ public class TopicPartitionOffsetOrderVerifier implements Verifier {
             System.out.println("[TopicPartitionOffsetOrderVerifier] Record out of order for partition " + partition + 
                              " - Offset: " + record.offset() + 
                              " (Previous: " + latestOffset.get() + ")");
+            return VerificationResultType.FAILED_LATE_ARRIVAL;
         }
         
-        return isInOrder;
+        return VerificationResultType.SUCCESS;
     }
     
     @Override

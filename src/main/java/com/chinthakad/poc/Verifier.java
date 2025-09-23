@@ -14,7 +14,7 @@ public interface Verifier {
      * @param record the consumer record to verify
      * @return true if the record should be processed, false otherwise
      */
-    boolean verify(ConsumerRecord<String, String> record);
+    VerificationResultType verify(ConsumerRecord<String, String> record);
     
     /**
      * Stores a consumer record for this verifier's tracking purposes.

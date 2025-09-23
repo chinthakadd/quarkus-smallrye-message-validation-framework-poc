@@ -69,15 +69,15 @@ public class WatermarkMessagingConsumer {
 
         // BEFORE CONSUMING: Verify the record using MessageCheckpoint
         System.out.println("\n🔍 BEFORE CONSUMING - Verifying record...");
-        boolean shouldProcess = messageCheckpoint.verify(record);
+        VerificationResultType result = messageCheckpoint.verify(record);
         
-        if (!shouldProcess) {
-            System.out.println("Record verification failed - skipping processing");
+        if (!result.verified()) {
+            System.out.println("Record verification failed - " + result + " - skipping processing");
             System.out.println("=================================");
             return;
         }
         
-        System.out.println("Record verification passed - proceeding with processing");
+        System.out.println("Record verification passed - " + result + " - proceeding with processing");
 
         // Read Kafka headers
         String sender = getHeaderValue(record, "sender");

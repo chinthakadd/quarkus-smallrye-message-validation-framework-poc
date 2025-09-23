@@ -21,7 +21,7 @@ public class MessageCheckpointImpl implements MessageCheckpoint {
     Instance<Verifier> verifiers;
     
     @Override
-    public boolean verify(ConsumerRecord<String, String> record) {
+    public VerificationResultType verify(ConsumerRecord<String, String> record) {
         System.out.println("[MessageCheckpointImpl] Starting verification for record offset: " + record.offset());
         
         // Sort verifiers by priority (lower number = higher priority)
@@ -34,15 +34,15 @@ public class MessageCheckpointImpl implements MessageCheckpoint {
             System.out.println("[MessageCheckpointImpl] Executing verifier: " + verifier.getClass().getSimpleName() + 
                              " (priority: " + verifier.priority() + ")");
             
-            boolean verified = verifier.verify(record);
-            if (!verified) {
-                System.out.println("[MessageCheckpointImpl] Verification failed by: " + verifier.getClass().getSimpleName());
-                return false;
+            VerificationResultType result = verifier.verify(record);
+            if (!result.verified()) {
+                System.out.println("[MessageCheckpointImpl] Verification failed by: " + verifier.getClass().getSimpleName() + " - " + result);
+                return result; // Default to OUT_OF_ORDER for now
             }
         }
         
         System.out.println("[MessageCheckpointImpl] All verifiers passed - record verified");
-        return true;
+        return VerificationResultType.SUCCESS;
     }
     
     @Override

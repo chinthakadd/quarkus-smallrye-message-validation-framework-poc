@@ -21,7 +21,7 @@ class SenderWatermarkOrderVerifierTest {
         ConsumerRecord<String, String> record = createRecordWithHeaders("sender-1", "test-topic", 0, 0L, "value1", 1000L);
         
         // First record should be verified
-        assertTrue(verifier.verify(record));
+        assertTrue(verifier.verify(record).verified());
     }
 
     @Test
@@ -31,12 +31,12 @@ class SenderWatermarkOrderVerifierTest {
         
         // First record
         ConsumerRecord<String, String> record1 = createRecordWithHeaders("sender-1", "test-topic", 0, 0L, "value1", timestamp1);
-        assertTrue(verifier.verify(record1));
+        assertTrue(verifier.verify(record1).verified());
         verifier.storeRecord(record1);
         
         // Second record (in order)
         ConsumerRecord<String, String> record2 = createRecordWithHeaders("sender-1", "test-topic", 0, 1L, "value2", timestamp2);
-        assertTrue(verifier.verify(record2));
+        assertTrue(verifier.verify(record2).verified());
         verifier.storeRecord(record2);
         
         // Verify watermark is updated
@@ -52,12 +52,12 @@ class SenderWatermarkOrderVerifierTest {
         
         // First record
         ConsumerRecord<String, String> record1 = createRecordWithHeaders("sender-1", "test-topic", 0, 0L, "value1", timestamp1);
-        assertTrue(verifier.verify(record1));
+        assertTrue(verifier.verify(record1).verified());
         verifier.storeRecord(record1);
         
         // Late arrival record (should fail verification)
         ConsumerRecord<String, String> record2 = createRecordWithHeaders("sender-1", "test-topic", 0, 1L, "value2", timestamp2);
-        assertFalse(verifier.verify(record2));
+        assertFalse(verifier.verify(record2).verified());
         
         // Verify watermark is still the first timestamp
         Long watermark = verifier.getWatermark("sender-1", "test-topic", 0);
@@ -71,12 +71,12 @@ class SenderWatermarkOrderVerifierTest {
         
         // First sender
         ConsumerRecord<String, String> record1 = createRecordWithHeaders("sender-1", "test-topic", 0, 0L, "value1", timestamp1);
-        assertTrue(verifier.verify(record1));
+        assertTrue(verifier.verify(record1).verified());
         verifier.storeRecord(record1);
         
         // Different sender with earlier timestamp (should be allowed)
         ConsumerRecord<String, String> record2 = createRecordWithHeaders("sender-2", "test-topic", 0, 1L, "value2", timestamp2);
-        assertTrue(verifier.verify(record2));
+        assertTrue(verifier.verify(record2).verified());
         verifier.storeRecord(record2);
         
         // Verify both watermarks are tracked independently
@@ -94,12 +94,12 @@ class SenderWatermarkOrderVerifierTest {
         
         // First partition
         ConsumerRecord<String, String> record1 = createRecordWithHeaders("sender-1", "test-topic", 0, 0L, "value1", timestamp1);
-        assertTrue(verifier.verify(record1));
+        assertTrue(verifier.verify(record1).verified());
         verifier.storeRecord(record1);
         
         // Different partition with earlier timestamp (should be allowed)
         ConsumerRecord<String, String> record2 = createRecordWithHeaders("sender-1", "test-topic", 1, 0L, "value2", timestamp2);
-        assertTrue(verifier.verify(record2));
+        assertTrue(verifier.verify(record2).verified());
         verifier.storeRecord(record2);
         
         // Verify both watermarks are tracked independently
@@ -116,7 +116,7 @@ class SenderWatermarkOrderVerifierTest {
         ConsumerRecord<String, String> record = new ConsumerRecord<>("test-topic", 0, 0L, "key1", "value1");
         
         // Should be allowed (no headers to verify)
-        assertTrue(verifier.verify(record));
+        assertTrue(verifier.verify(record).verified());
         verifier.storeRecord(record);
     }
 
@@ -126,7 +126,7 @@ class SenderWatermarkOrderVerifierTest {
         ConsumerRecord<String, String> record = createRecordWithHeaders("sender-1", "test-topic", 0, 0L, "value1", "invalid-timestamp");
         
         // Should be allowed (invalid format)
-        assertTrue(verifier.verify(record));
+        assertTrue(verifier.verify(record).verified());
         verifier.storeRecord(record);
     }
 
@@ -140,12 +140,12 @@ class SenderWatermarkOrderVerifierTest {
         
         // First record
         ConsumerRecord<String, String> record1 = createRecordWithHeaders("sender-1", "test-topic", 0, 0L, "value1", timestamp1);
-        assertTrue(verifier.verify(record1));
+        assertTrue(verifier.verify(record1).verified());
         verifier.storeRecord(record1);
         
         // Late arrival within threshold (should be accepted)
         ConsumerRecord<String, String> record2 = createRecordWithHeaders("sender-1", "test-topic", 0, 1L, "value2", timestamp2);
-        assertTrue(verifier.verify(record2)); // Should be accepted
+        assertTrue(verifier.verify(record2).verified()); // Should be accepted
         
         // Verify watermark is still the first timestamp (late arrival doesn't update watermark)
         Long watermark = verifier.getWatermark("sender-1", "test-topic", 0);
@@ -162,12 +162,12 @@ class SenderWatermarkOrderVerifierTest {
         
         // First record
         ConsumerRecord<String, String> record1 = createRecordWithHeaders("sender-1", "test-topic", 0, 0L, "value1", timestamp1);
-        assertTrue(verifier.verify(record1));
+        assertTrue(verifier.verify(record1).verified());
         verifier.storeRecord(record1);
         
         // Late arrival exceeding threshold (should be rejected)
         ConsumerRecord<String, String> record2 = createRecordWithHeaders("sender-1", "test-topic", 0, 1L, "value2", timestamp2);
-        assertFalse(verifier.verify(record2)); // Should be rejected
+        assertFalse(verifier.verify(record2).verified()); // Should be rejected
         
         // Verify watermark is still the first timestamp
         Long watermark = verifier.getWatermark("sender-1", "test-topic", 0);
