@@ -5,7 +5,6 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -18,12 +17,14 @@ import java.util.stream.Collectors;
  * This implementation uses a fixed-size data structure that evicts entries when:
  * - The size threshold is reached (oldest entries are removed first)
  * - Entries are older than the time threshold
+ * 
+ * Duplicate detection is performed per sender using composite keys (sender, message_id).
  */
 @ApplicationScoped
 public class InMemoryMessageUniquenessRepository implements MessageUniquenessRepository {
     
-    // Map to store message_id -> entry timestamp
-    private final ConcurrentMap<UUID, Long> messageIdStore = new ConcurrentHashMap<>();
+    // Map to store (sender, message_id) -> entry timestamp
+    private final ConcurrentMap<SenderMessageIdKey, Long> keyStore = new ConcurrentHashMap<>();
     
     // Lock for compound eviction operations to ensure atomicity
     // ConcurrentHashMap is thread-safe for individual operations, but we need
@@ -39,19 +40,19 @@ public class InMemoryMessageUniquenessRepository implements MessageUniquenessRep
     long timeThresholdMillis;
     
     @Override
-    public boolean exists(UUID messageId) {
+    public boolean exists(SenderMessageIdKey key) {
         // ConcurrentHashMap.containsKey() is thread-safe, no lock needed
-        return messageIdStore.containsKey(messageId);
+        return keyStore.containsKey(key);
     }
     
     @Override
-    public void store(UUID messageId) {
+    public void store(SenderMessageIdKey key) {
         lock.writeLock().lock();
         try {
             long currentTime = System.currentTimeMillis();
             
-            // Store the message_id with current timestamp
-            messageIdStore.put(messageId, currentTime);
+            // Store the (sender, message_id) key with current timestamp
+            keyStore.put(key, currentTime);
             
             // Perform eviction if needed
             evictIfNeeded(currentTime);
@@ -61,21 +62,21 @@ public class InMemoryMessageUniquenessRepository implements MessageUniquenessRep
     }
     
     @Override
-    public void remove(UUID messageId) {
+    public void remove(SenderMessageIdKey key) {
         // ConcurrentHashMap.remove() is thread-safe, no lock needed
-        messageIdStore.remove(messageId);
+        keyStore.remove(key);
     }
     
     @Override
     public int size() {
         // ConcurrentHashMap.size() is thread-safe, no lock needed
-        return messageIdStore.size();
+        return keyStore.size();
     }
     
     @Override
     public void clear() {
         // ConcurrentHashMap.clear() is thread-safe, no lock needed
-        messageIdStore.clear();
+        keyStore.clear();
     }
     
     /**
@@ -94,7 +95,7 @@ public class InMemoryMessageUniquenessRepository implements MessageUniquenessRep
      * Removes entries that are older than the time threshold.
      */
     private void evictByTime(long currentTime) {
-        messageIdStore.entrySet().removeIf(entry -> {
+        keyStore.entrySet().removeIf(entry -> {
             long age = currentTime - entry.getValue();
             return age > timeThresholdMillis;
         });
@@ -105,7 +106,7 @@ public class InMemoryMessageUniquenessRepository implements MessageUniquenessRep
      * Removes entries until the size is below the threshold.
      */
     private void evictBySize() {
-        int currentSize = messageIdStore.size();
+        int currentSize = keyStore.size();
         if (currentSize <= sizeThreshold) {
             return;
         }
@@ -114,18 +115,14 @@ public class InMemoryMessageUniquenessRepository implements MessageUniquenessRep
         int entriesToRemove = currentSize - sizeThreshold;
         
         // Sort entries by timestamp (oldest first), collect keys to remove, then remove them
-        List<UUID> keysToRemove = messageIdStore.entrySet().stream()
+        List<SenderMessageIdKey> keysToRemove = keyStore.entrySet().stream()
                 .sorted((e1, e2) -> Long.compare(e1.getValue(), e2.getValue()))
                 .limit(entriesToRemove)
                 .map(entry -> entry.getKey())
                 .collect(Collectors.toList());
         
         // Remove the collected keys
-        keysToRemove.forEach(messageIdStore::remove);
-        
-        // Optional: Rebuild Bloom filter to reduce false positives after eviction
-        // This is expensive but keeps the Bloom filter accurate. For now, we skip it
-        // and rely on map verification for accuracy.
+        keysToRemove.forEach(keyStore::remove);
     }
 }
 

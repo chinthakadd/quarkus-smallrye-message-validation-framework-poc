@@ -8,9 +8,12 @@ import jakarta.inject.Inject;
 import java.util.UUID;
 
 /**
- * Verifier that checks for duplicate messages based on the "message_id" Kafka header.
+ * Verifier that checks for duplicate messages based on the "message_id" Kafka header per sender.
  * If a message_id header exists and contains a UUID, this verifier checks if the message
- * has been seen before. Duplicate messages are rejected with FAILED_DUPLICATE.
+ * from the same sender has been seen before. Duplicate messages are rejected with FAILED_DUPLICATE.
+ * 
+ * Duplicate detection is performed per sender, so the same message_id from different senders
+ * is considered unique.
  */
 @ApplicationScoped
 public class UniquenessVerifier implements Verifier {
@@ -20,9 +23,15 @@ public class UniquenessVerifier implements Verifier {
     
     @Override
     public VerificationResultType verify(ConsumerRecord<String, String> record) {
+        String sender = getHeaderValue(record, "sender");
         String messageIdStr = getHeaderValue(record, "message_id");
         
-        // If no message_id header exists, allow the record (not all messages may have it)
+        // If no sender or message_id header exists, allow the record
+        if (sender == null || sender.trim().isEmpty()) {
+            System.out.println("[UniquenessVerifier] No sender header found - allowing");
+            return VerificationResultType.SUCCESS;
+        }
+        
         if (messageIdStr == null || messageIdStr.trim().isEmpty()) {
             System.out.println("[UniquenessVerifier] No message_id header found - allowing");
             return VerificationResultType.SUCCESS;
@@ -30,14 +39,15 @@ public class UniquenessVerifier implements Verifier {
         
         try {
             UUID messageId = UUID.fromString(messageIdStr.trim());
+            SenderMessageIdKey key = new SenderMessageIdKey(sender.trim(), messageId);
             
-            // Check if this message_id already exists
-            if (uniquenessRepository.exists(messageId)) {
-                System.out.println("[UniquenessVerifier] DUPLICATE message detected - message_id: " + messageId);
+            // Check if this (sender, message_id) combination already exists
+            if (uniquenessRepository.exists(key)) {
+                System.out.println("[UniquenessVerifier] DUPLICATE message detected - sender: " + sender + ", message_id: " + messageId);
                 return VerificationResultType.FAILED_DUPLICATE;
             }
             
-            System.out.println("[UniquenessVerifier] Unique message - message_id: " + messageId);
+            System.out.println("[UniquenessVerifier] Unique message - sender: " + sender + ", message_id: " + messageId);
             return VerificationResultType.SUCCESS;
             
         } catch (IllegalArgumentException e) {
@@ -49,9 +59,15 @@ public class UniquenessVerifier implements Verifier {
     
     @Override
     public void storeRecord(ConsumerRecord<String, String> record) {
+        String sender = getHeaderValue(record, "sender");
         String messageIdStr = getHeaderValue(record, "message_id");
         
-        // If no message_id header exists, skip storage
+        // If no sender or message_id header exists, skip storage
+        if (sender == null || sender.trim().isEmpty()) {
+            System.out.println("[UniquenessVerifier] No sender header found - skipping storage");
+            return;
+        }
+        
         if (messageIdStr == null || messageIdStr.trim().isEmpty()) {
             System.out.println("[UniquenessVerifier] No message_id header found - skipping storage");
             return;
@@ -59,11 +75,12 @@ public class UniquenessVerifier implements Verifier {
         
         try {
             UUID messageId = UUID.fromString(messageIdStr.trim());
+            SenderMessageIdKey key = new SenderMessageIdKey(sender.trim(), messageId);
             
-            // Store the message_id for future duplicate detection
-            uniquenessRepository.store(messageId);
+            // Store the (sender, message_id) combination for future duplicate detection
+            uniquenessRepository.store(key);
             
-            System.out.println("[UniquenessVerifier] Stored message_id: " + messageId + 
+            System.out.println("[UniquenessVerifier] Stored - sender: " + sender + ", message_id: " + messageId + 
                              " (repository size: " + uniquenessRepository.size() + ")");
             
         } catch (IllegalArgumentException e) {

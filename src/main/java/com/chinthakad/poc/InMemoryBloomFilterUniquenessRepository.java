@@ -9,7 +9,6 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -26,16 +25,19 @@ import java.util.stream.Collectors;
  * Eviction occurs when:
  * - The size threshold is reached (oldest entries are removed first)
  * - Entries are older than the time threshold
+ * 
+ * Duplicate detection is performed per sender using composite keys (sender, message_id).
  */
 @ApplicationScoped
 @Default
 public class InMemoryBloomFilterUniquenessRepository implements MessageUniquenessRepository {
     
     // Bloom filter for fast duplicate detection (no false negatives, some false positives)
+    // Uses string representation of (sender, message_id) composite key
     private volatile BloomFilter<String> bloomFilter;
     
-    // Map to store message_id -> entry timestamp for verification and eviction
-    private final ConcurrentMap<UUID, Long> messageIdStore = new ConcurrentHashMap<>();
+    // Map to store (sender, message_id) -> entry timestamp for verification and eviction
+    private final ConcurrentMap<SenderMessageIdKey, Long> keyStore = new ConcurrentHashMap<>();
     
     // Lock for compound eviction operations to ensure atomicity
     // ConcurrentHashMap is thread-safe for individual operations, but we need
@@ -84,33 +86,40 @@ public class InMemoryBloomFilterUniquenessRepository implements MessageUniquenes
         this.bloomFilter = createBloomFilter();
     }
     
+    /**
+     * Converts a SenderMessageIdKey to a string representation for the Bloom filter.
+     */
+    private String keyToString(SenderMessageIdKey key) {
+        return key.getSender() + ":" + key.getMessageId().toString();
+    }
+    
     @Override
-    public boolean exists(UUID messageId) {
-        String messageIdStr = messageId.toString();
+    public boolean exists(SenderMessageIdKey key) {
+        String keyStr = keyToString(key);
         
         // Fast path: Bloom filter can definitively say "not present" (no false negatives)
         // If Bloom filter says not present, we know it's definitely not a duplicate
-        if (!bloomFilter.mightContain(messageIdStr)) {
+        if (!bloomFilter.mightContain(keyStr)) {
             return false;
         }
         
         // Bloom filter says "might be present" - verify with actual map
         // This handles false positives from the Bloom filter
-        return messageIdStore.containsKey(messageId);
+        return keyStore.containsKey(key);
     }
     
     @Override
-    public void store(UUID messageId) {
+    public void store(SenderMessageIdKey key) {
         lock.writeLock().lock();
         try {
             long currentTime = System.currentTimeMillis();
-            String messageIdStr = messageId.toString();
+            String keyStr = keyToString(key);
             
             // Add to Bloom filter first (thread-safe for writes)
-            bloomFilter.put(messageIdStr);
+            bloomFilter.put(keyStr);
             
-            // Store the message_id with current timestamp
-            messageIdStore.put(messageId, currentTime);
+            // Store the (sender, message_id) key with current timestamp
+            keyStore.put(key, currentTime);
             
             // Perform eviction if needed
             evictIfNeeded(currentTime);
@@ -120,16 +129,16 @@ public class InMemoryBloomFilterUniquenessRepository implements MessageUniquenes
     }
     
     @Override
-    public void remove(UUID messageId) {
+    public void remove(SenderMessageIdKey key) {
         // Note: Bloom filters don't support deletion, so we only remove from the map
         // The Bloom filter may have false positives, but that's okay - we verify with the map
-        messageIdStore.remove(messageId);
+        keyStore.remove(key);
     }
     
     @Override
     public int size() {
         // ConcurrentHashMap.size() is thread-safe, no lock needed
-        return messageIdStore.size();
+        return keyStore.size();
     }
     
     @Override
@@ -137,7 +146,7 @@ public class InMemoryBloomFilterUniquenessRepository implements MessageUniquenes
         lock.writeLock().lock();
         try {
             // Clear both Bloom filter and map
-            messageIdStore.clear();
+            keyStore.clear();
             bloomFilter = createBloomFilter();
         } finally {
             lock.writeLock().unlock();
@@ -160,7 +169,7 @@ public class InMemoryBloomFilterUniquenessRepository implements MessageUniquenes
      * Removes entries that are older than the time threshold.
      */
     private void evictByTime(long currentTime) {
-        messageIdStore.entrySet().removeIf(entry -> {
+        keyStore.entrySet().removeIf(entry -> {
             long age = currentTime - entry.getValue();
             return age > timeThresholdMillis;
         });
@@ -175,7 +184,7 @@ public class InMemoryBloomFilterUniquenessRepository implements MessageUniquenes
      * Optionally, we could rebuild the Bloom filter after eviction, but that's expensive.
      */
     private void evictBySize() {
-        int currentSize = messageIdStore.size();
+        int currentSize = keyStore.size();
         if (currentSize <= sizeThreshold) {
             return;
         }
@@ -184,14 +193,14 @@ public class InMemoryBloomFilterUniquenessRepository implements MessageUniquenes
         int entriesToRemove = currentSize - sizeThreshold;
         
         // Sort entries by timestamp (oldest first), collect keys to remove, then remove them
-        List<UUID> keysToRemove = messageIdStore.entrySet().stream()
+        List<SenderMessageIdKey> keysToRemove = keyStore.entrySet().stream()
                 .sorted((e1, e2) -> Long.compare(e1.getValue(), e2.getValue()))
                 .limit(entriesToRemove)
                 .map(entry -> entry.getKey())
                 .collect(Collectors.toList());
         
         // Remove the collected keys
-        keysToRemove.forEach(messageIdStore::remove);
+        keysToRemove.forEach(keyStore::remove);
         
         // Optional: Rebuild Bloom filter to reduce false positives after eviction
         // This is expensive but keeps the Bloom filter accurate. For now, we skip it

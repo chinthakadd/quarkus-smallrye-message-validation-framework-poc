@@ -1,39 +1,39 @@
 package com.chinthakad.poc;
 
-import java.util.UUID;
-
 /**
- * Repository interface for storing and checking message uniqueness based on message_id.
+ * Repository interface for storing and checking message uniqueness based on sender and message_id.
+ * Duplicate detection is performed per sender, so the same message_id from different senders
+ * is considered unique.
  * This interface is designed to be flexible for future database persistence implementations.
  */
 public interface MessageUniquenessRepository {
     
     /**
-     * Checks if a message_id already exists in the repository.
+     * Checks if a (sender, message_id) combination already exists in the repository.
      * 
-     * @param messageId the UUID to check
-     * @return true if the message_id exists (duplicate), false otherwise
+     * @param key the composite key (sender, message_id) to check
+     * @return true if the combination exists (duplicate), false otherwise
      */
-    boolean exists(UUID messageId);
+    boolean exists(SenderMessageIdKey key);
     
     /**
-     * Stores a message_id with its entry timestamp.
+     * Stores a (sender, message_id) combination with its entry timestamp.
      * 
-     * @param messageId the UUID to store
+     * @param key the composite key (sender, message_id) to store
      */
-    void store(UUID messageId);
+    void store(SenderMessageIdKey key);
     
     /**
-     * Removes a message_id from the repository.
+     * Removes a (sender, message_id) combination from the repository.
      * 
-     * @param messageId the UUID to remove
+     * @param key the composite key (sender, message_id) to remove
      */
-    void remove(UUID messageId);
+    void remove(SenderMessageIdKey key);
     
     /**
      * Gets the current size of the repository.
      * 
-     * @return the number of message_ids stored
+     * @return the number of (sender, message_id) combinations stored
      */
     int size();
     
