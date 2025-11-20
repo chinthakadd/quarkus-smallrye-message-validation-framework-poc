@@ -122,7 +122,7 @@ public class HistogramBucketBinningGenerator {
     public static void main(String[] args) {
         System.out.println("=== Histogram Bucket Binning Generator ===\n");
         
-        int targetBuckets = 10;
+        int targetBuckets = 100;
         
         // Test hybrid algorithm
         System.out.println("1. Hybrid Algorithm (Linear + Exponential):");
